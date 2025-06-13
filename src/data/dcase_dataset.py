@@ -48,7 +48,7 @@ class DCASETask2Dataset(Dataset):
             base = root / stage / "raw"
             pattern = base / "**" / domains[split] / "**" / "*.wav"
             # recursive=True lets us match section_00/<file>.wav, etc.
-            self.files += list(pattern.glob(recursive=True))
+            self.files += list(pattern.rglob("*.wav"))
 
         if not self.files:
             raise RuntimeError(f"No wavs found in {root} for split='{split}'")
