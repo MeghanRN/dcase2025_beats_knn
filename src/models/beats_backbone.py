@@ -1,59 +1,62 @@
-"""
-BEATs backbone wrapper.
-
-Loads a pre‑trained BEATs model from torchaudio and exposes a
-`forward(waveform, sr)` method that returns an embedding tensor
-of shape (num_frames, embed_dim).
-
-If `fine_tune=True`, all transformer parameters are trainable.
-"""
-from typing import Tuple
-
-import torch
-import torchaudio
+from pathlib import Path
+import torch, torchaudio
 
 
 class BEATsBackbone(torch.nn.Module):
-    def __init__(self, checkpoint: str = "BEATS_BASE", fine_tune: bool = False):
+    """
+    • Works with waveform-based bundles (HuBERT, Wav2Vec2, XLSR, …)
+    • Works with spectrogram-based bundles (BEATs) if you switch embedding.
+    """
+
+    def __init__(self, checkpoint: str = "HUBERT_BASE"):
         super().__init__()
-        try:
-            self.bundle = getattr(torchaudio.pipelines, checkpoint)
-        except AttributeError as e:
-            raise ValueError(f"Unknown BEATs checkpoint: {checkpoint}") from e
 
-        self.model = self.bundle.get_model()
-        if not fine_tune:
-            for p in self.model.parameters():
-                p.requires_grad = False
+        self.bundle = getattr(torchaudio.pipelines, checkpoint)
+        self.model = self.bundle.get_model().eval()
+        self.sample_rate = self.bundle.sample_rate
 
-        self.mel_spec = torchaudio.transforms.MelSpectrogram(
-            sample_rate=self.bundle.sample_rate,
-            n_fft=1024,
-            hop_length=320,
-            n_mels=128,
-            f_min=0,
-            f_max=None
+        # Decide whether the bundle expects waveform or log-mel input
+        self.expect_waveform = checkpoint.startswith(
+            ("HUBERT", "WAV2VEC", "XLSR")
         )
 
-    @torch.no_grad()
-    def forward(self, waveform: torch.Tensor, sr: int) -> torch.Tensor:
-        """Compute frame‑level embeddings.
-
-        Args:
-            waveform: (1, num_samples) mono tensor in range [-1,1]
-            sr: sampling rate
-
-        Returns:
-            emb: (T, D) tensor where T ≈ num_frames
-        """
-        if sr != self.bundle.sample_rate:
-            waveform = torchaudio.functional.resample(
-                waveform, orig_freq=sr, new_freq=self.bundle.sample_rate
+        if not self.expect_waveform:
+            # Mel layer only needed for BEATs-style models
+            self.mel = torchaudio.transforms.MelSpectrogram(
+                sample_rate=self.sample_rate,
+                n_fft=1024,
+                hop_length=512,
+                n_mels=128,
             )
 
-        # (128, num_frames)
-        mel = self.mel_spec(waveform).log1p()
-        # BEATs expects (batch=1, frames, mel_bins)
-        mel = mel.squeeze(0).transpose(0, 1).unsqueeze(0)
-        emb = self.model.extract_features(mel)[0]  # (1, T, D)
-        return emb.squeeze(0)
+    # ──────────────────────────────────────────────────────────
+    @torch.no_grad()
+    def forward(self, wav: torch.Tensor, sr: int | torch.Tensor) -> torch.Tensor:
+        """
+        wav : (1, T) float32, −1…1
+        sr  : sample-rate (int or 0-D tensor)
+        returns (1, D) clip-level embedding
+        """
+        sr = int(sr) if torch.is_tensor(sr) else sr
+        if sr != self.sample_rate:
+            wav = torchaudio.functional.resample(wav, sr, self.sample_rate)
+
+        # ── extract features ─────────────────────────────────────
+        if self.expect_waveform:
+            out = self.model.extract_features(wav)   # tuple or list
+        else:
+            mel = self.mel(wav)                      # (1, F, T)
+            out = self.model.extract_features(mel)
+
+        # Normalise heterogeneous return types -> Tensor (B, T, D)
+        if isinstance(out, tuple):       # Wav2Vec2 returns (list, lengths)
+            x = out[0]
+        else:                            # HuBERT returns list[Tensor]
+            x = out
+
+        if isinstance(x, list):
+            feats = x[-1]                # last layer = highest rep.
+        else:
+            feats = x
+
+        return feats.mean(dim=1)         # time-avg pooling  (B, D)
