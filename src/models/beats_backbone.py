@@ -28,6 +28,10 @@ class BEATsBackbone(torch.nn.Module):
                 hop_length=512,
                 n_mels=128,
             )
+        finetuned = Path("finetuned_beats_large.pt")
+        if finetuned.exists():
+            self.model.load_state_dict(torch.load(finetuned, map_location="cpu"))
+            print("✔ loaded finetuned backbone")
 
     # ──────────────────────────────────────────────────────────
     @torch.no_grad()
