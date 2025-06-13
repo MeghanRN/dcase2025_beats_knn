@@ -1,68 +1,59 @@
+"""
+Backbone wrapper: works with HuBERT, Wav2Vec2, BEATs.
+"""
+
 from pathlib import Path
 import torch, torchaudio
 
 
 class BEATsBackbone(torch.nn.Module):
-    """
-    • Works with waveform-based bundles (HuBERT, Wav2Vec2, XLSR, …)
-    • Works with spectrogram-based bundles (BEATs) if you switch embedding.
-    """
-
-    def __init__(self, checkpoint: str = "HUBERT_BASE"):
+    def __init__(self, checkpoint="HUBERT_BASE", use_layer_stack=False):
         super().__init__()
 
         self.bundle = getattr(torchaudio.pipelines, checkpoint)
         self.model = self.bundle.get_model().eval()
         self.sample_rate = self.bundle.sample_rate
+        self.use_layer_stack = use_layer_stack
 
-        # Decide whether the bundle expects waveform or log-mel input
+        # waveform vs. spectrogram input
         self.expect_waveform = checkpoint.startswith(
             ("HUBERT", "WAV2VEC", "XLSR")
         )
-
         if not self.expect_waveform:
-            # Mel layer only needed for BEATs-style models
             self.mel = torchaudio.transforms.MelSpectrogram(
                 sample_rate=self.sample_rate,
                 n_fft=1024,
                 hop_length=512,
                 n_mels=128,
             )
+
+        # load optional fine-tuned weights
         finetuned = Path("finetuned_beats_large.pt")
         if finetuned.exists():
-            self.model.load_state_dict(torch.load(finetuned, map_location="cpu"))
-            print("✔ loaded finetuned backbone")
+            self.model.load_state_dict(
+                torch.load(finetuned, map_location="cpu"), strict=False
+            )
+            print("✔ loaded fine-tuned backbone")
 
-    # ──────────────────────────────────────────────────────────
+    # -------------------------------------------------------- #
     @torch.no_grad()
-    def forward(self, wav: torch.Tensor, sr: int | torch.Tensor) -> torch.Tensor:
-        """
-        wav : (1, T) float32, −1…1
-        sr  : sample-rate (int or 0-D tensor)
-        returns (1, D) clip-level embedding
-        """
+    def forward(self, wav: torch.Tensor, sr: int | torch.Tensor):
         sr = int(sr) if torch.is_tensor(sr) else sr
         if sr != self.sample_rate:
             wav = torchaudio.functional.resample(wav, sr, self.sample_rate)
-        if cfg["model"].get("use_layer_stack", False) and isinstance(x, list):
-            feats = torch.cat(x[::3], dim=-1)    # layers 0,3,6,9  (B,T,4*1024)
 
-        # ── extract features ─────────────────────────────────────
+        # extract features
         if self.expect_waveform:
-            out = self.model.extract_features(wav)   # tuple or list
+            out = self.model.extract_features(wav)
         else:
-            mel = self.mel(wav)                      # (1, F, T)
+            mel = self.mel(wav)
             out = self.model.extract_features(mel)
 
-        # Normalise heterogeneous return types -> Tensor (B, T, D)
-        if isinstance(out, tuple):       # Wav2Vec2 returns (list, lengths)
-            x = out[0]
-        else:                            # HuBERT returns list[Tensor]
-            x = out
-
-        if isinstance(x, list):
-            feats = x[-1]                # last layer = highest rep.
+        # normalise return types
+        x = out[0] if isinstance(out, tuple) else out
+        if self.use_layer_stack and isinstance(x, list):
+            feats = torch.cat(x[::3], dim=-1)      # concat layers 0,3,6,9
         else:
-            feats = x
+            feats = x[-1] if isinstance(x, list) else x
 
-        return feats.mean(dim=1)         # time-avg pooling  (B, D)
+        return feats.mean(dim=1)                   # (B, D)
