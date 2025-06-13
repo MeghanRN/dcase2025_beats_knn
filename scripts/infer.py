@@ -1,14 +1,19 @@
 #!/usr/bin/env python
 """
-Run inference on test clips and write DCASE CSV files.
+Inference for DCASE-2025 Task-2
+—————————————
+Reads the memory-bank created by `train_knn.py`, computes k-NN
+anomaly scores for every *test* clip, and writes one CSV per
+machine/section in the official DCASE format.
 """
+from __future__ import annotations
 import argparse
 from pathlib import Path
 import csv
+
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-import numpy as np
 
 from src.utils.file_utils import load_config
 from src.data.dcase_dataset import DCASETask2Dataset
@@ -16,11 +21,14 @@ from src.models.beats_backbone import BEATsBackbone
 from src.models.detector import KNNDetector
 
 
+# ──────────────────────────────────────────────────────────────
 def collate(batch):
+    """Keep list of tuples unchanged (variable-length audio)."""
     return batch
 
 
-def main():
+def main() -> None:
+    # ── CLI -------------------------------------------------------------
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/default.yaml")
     args = ap.parse_args()
@@ -28,46 +36,60 @@ def main():
     cfg = load_config(args.config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    dataset = DCASETask2Dataset(cfg["dcase_root"], split="test")
-    loader = DataLoader(dataset, batch_size=1, shuffle=False,
-                        collate_fn=collate, num_workers=2)
+    # ── resolve legacy vs. new keys ------------------------------------
+    bank_dir = cfg.get("output_dir", cfg["logging"]["bank_out"])
+    csv_out  = cfg.get("csv_out_dir", cfg["logging"]["csv_out_dir"])
 
+    # ── dataset & loader ------------------------------------------------
+    test_ds = DCASETask2Dataset(cfg["data"]["root"], split="test")
+    loader  = DataLoader(
+        test_ds,
+        batch_size=1,
+        shuffle=False,
+        collate_fn=collate,
+        num_workers=cfg["dataloader"]["num_workers"],
+        pin_memory=device.type == "cuda",
+    )
+
+    # ── backbone & k-NN detector ---------------------------------------
     backbone = BEATsBackbone(cfg["model"]["embedding"]).to(device).eval()
 
-    # load detector
-    ckpt = torch.load(Path(cfg["output_dir"]) / "memory_bank.pt", map_location=device)
+    ckpt = torch.load(Path(bank_dir) / "memory_bank.pt", map_location=device)
     detector = KNNDetector(k=cfg["model"]["k"])
-    detector.fit(ckpt["memory"])
+    detector.fit(ckpt["memory"])         # list[Tensor]
 
-    results_dir = Path(cfg["output_dir"])
-    results_dir.mkdir(parents=True, exist_ok=True)
+    # ── CSV writers per machine/section --------------------------------
+    writers = {}
 
-    scores = []
-    paths = []
-    for waveform, sr, path in tqdm(loader):
-        waveform = waveform[0].to(device)
-        feat = backbone(waveform, sr[0])
-        score = detector.score(feat)
-        scores.append(score)
-        paths.append(path[0])
+    for batch in tqdm(loader, desc="Scoring clips"):
+        wav, sr, path = batch[0]
+        wav = wav.to(device)
+        sr  = int(sr) if torch.is_tensor(sr) else sr
 
-    # group by <machine_id_domain>
-    rows = {}
-    for p, s in zip(paths, scores):
-        parts = Path(p).parts
-        machine_id = parts[-4]  # <machine_type>/<machine_id>/<domain>/...
-        domain = parts[-3]
-        key = f"{machine_id}_{domain}"
-        rows.setdefault(key, []).append((p, s))
+        feat  = backbone(wav, sr)
+        score = detector.score(feat).item()
 
-    for key, items in rows.items():
-        csv_path = results_dir / f"{key}.csv"
-        with open(csv_path, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["filename", "anomaly_score"])
-            for p, s in items:
-                writer.writerow([Path(p).name, s])
-        print("Wrote", csv_path)
+        rel = Path(path).relative_to(cfg["data"]["root"])
+        # e.g.  dev_data/raw/fan/test/section_00_source_test_anomaly_012.wav
+        parts = rel.parts
+        machine   = parts[3]      # fan
+        section   = parts[4].split("_")[1]  # 00
+        csv_name  = f"anomaly_score_{machine}_section_{section}.csv"
+
+        if csv_name not in writers:
+            out_dir = Path(csv_out)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            fp = open(out_dir / csv_name, "w", newline="")
+            writers[csv_name] = (fp, csv.writer(fp))
+            writers[csv_name][1].writerow(["path", "score"])
+
+        writers[csv_name][1].writerow([path, f"{score:.6f}"])
+
+    # ── close all files -------------------------------------------------
+    for fp, _ in writers.values():
+        fp.close()
+
+    print(f"✅  CSV files written to {csv_out}/")
 
 
 if __name__ == "__main__":
