@@ -30,3 +30,12 @@ class KNNDetector:
         pooled = features.mean(dim=0, keepdim=True).cpu().numpy()
         dists, _ = self.nn.kneighbors(pooled)
         return float(dists.mean())
+        
+class MahalanobisDetector:
+    def fit(self, X):
+        self.mu = torch.stack(X).mean(0)
+        Σ = torch.cov(torch.stack(X).T)
+        self.invΣ = torch.linalg.inv(Σ + 1e-6 * torch.eye(Σ.shape[0]))
+    def score(self, q):
+        d = (q - self.mu)
+        return (d @ self.invΣ @ d.T).sqrt().item()
