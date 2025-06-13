@@ -32,42 +32,36 @@ import torchaudio
 
 
 class DCASETask2Dataset(Dataset):
-    """Recursive loader for Task-2 *train* or *test* subsets."""
+    """
+    Recursively collects WAVs matching
+        <root>/<dev|eval>_data/raw/**/<train|test>/**.wav
+    so it works for 'section_00', 'id_00/section_01', etc.
+    """
 
     def __init__(self, root: str, split: str = "train"):
         if split not in {"train", "test"}:
             raise ValueError("split must be 'train' or 'test'")
 
-        self.files: List[Path] = []
-
-        root = Path(root)
-        stages = ["dev_data", "eval_data"]
-        domains = {"train": "train", "test": "test"}
-
-        for stage in stages:
-            base = root / stage / "raw"
-            pattern = base / "**" / domains[split] / "**" / "*.wav"
-            # recursive=True lets us match section_00/<file>.wav, etc.
-            self.files += list(pattern.rglob("*.wav"))
+        self.files = []
+        for stage in ("dev_data", "eval_data"):
+            patt = Path(root, stage, "raw", "**", split, "**", "*.wav")
+            self.files += glob.glob(str(patt), recursive=True)
 
         if not self.files:
-            raise RuntimeError(f"No wavs found in {root} for split='{split}'")
+            raise RuntimeError(
+                f"No wavs found beneath {root} for split='{split}'. "
+                "Check folder names (train/test) and casing."
+            )
 
-        self.files.sort()  # deterministic order
+        self.files.sort()
 
-    # ------------------------------------------------------------------ #
-    def __len__(self) -> int:
+    # -------------------------------------------------------- #
+    def __len__(self):
         return len(self.files)
 
-    # ------------------------------------------------------------------ #
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int, str]:
-        wav_path = self.files[idx]
-        waveform, sr = torchaudio.load(wav_path)
-
-        # convert to mono if needed
-        if waveform.shape[0] > 1:
-            waveform = waveform.mean(dim=0, keepdim=True)
-
-        # label is unused by k-NN baseline; keep for future extensions
-        label = 0 if "/train/" in wav_path.as_posix() else -1
-        return waveform, sr, str(wav_path)
+        path = self.files[idx]
+        wav, sr = torchaudio.load(path)
+        if wav.shape[0] > 1:            # mix to mono
+            wav = wav.mean(dim=0, keepdim=True)
+        return wav, sr, path
