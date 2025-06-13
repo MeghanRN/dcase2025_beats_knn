@@ -54,7 +54,7 @@ def main() -> None:
     detector.fit(ckpt["memory"])                 # list[Tensor]
 
     # derive threshold
-    mem_dists = [detector.score(f).item() for f in ckpt["memory"]]
+    mem_dists = [float(detector.score(f)) for f in ckpt["memory"]]
     thr_pct   = cfg.get("threshold", {}).get("percentile", 90)
     threshold = percentile_threshold(mem_dists, thr_pct)
     print(f"Decision threshold @ {thr_pct}-percentile: {threshold:.4f}")
