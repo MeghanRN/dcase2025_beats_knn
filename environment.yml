@@ -1,0 +1,16 @@
+name: dcase25
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pytorch>=2.2
+  - torchaudio>=2.2
+  - librosa
+  - scikit-learn
+  - numpy
+  - tqdm
+  - pyyaml
+  - soundfile
+  - matplotlib
+  - pip

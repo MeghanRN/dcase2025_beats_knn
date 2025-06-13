@@ -1,0 +1,9 @@
+torch>=2.2
+torchaudio>=2.2
+librosa
+scikit-learn
+numpy
+tqdm
+pyyaml
+soundfile
+matplotlib

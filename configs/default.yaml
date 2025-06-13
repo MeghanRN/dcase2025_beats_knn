@@ -1,0 +1,17 @@
+# default config for BEATs + kNN
+dcase_root: "./data/task2_dev"
+output_dir: "./results"
+log_dir: "./logs"
+
+model:
+  embedding: "BEATS_BASE"
+  k: 3
+
+train:
+  domain: "source+target"  # options: source, target, source+target
+  num_workers: 4
+  batch_size: 8
+
+augmentation:
+  snr: [0, 10, 20]        # SNR levels (dB) for noise mixing
+  pitch_shift: [-1, 1]    # semitone shifts
