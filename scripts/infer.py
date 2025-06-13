@@ -67,7 +67,9 @@ def main() -> None:
         sr  = int(sr) if torch.is_tensor(sr) else sr
 
         feat  = backbone(wav, sr)
-        score = detector.score(feat).item()
+        score = detector.score(feat)
+        if not isinstance(score, float):          # tensor → python float
+            score = score.item()
 
         rel = Path(path).relative_to(cfg["data"]["root"])
         # e.g.  dev_data/raw/fan/test/section_00_source_test_anomaly_012.wav
