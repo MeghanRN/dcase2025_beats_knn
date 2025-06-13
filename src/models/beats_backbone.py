@@ -40,6 +40,8 @@ class BEATsBackbone(torch.nn.Module):
         sr = int(sr) if torch.is_tensor(sr) else sr
         if sr != self.sample_rate:
             wav = torchaudio.functional.resample(wav, sr, self.sample_rate)
+        if cfg["model"].get("use_layer_stack", False) and isinstance(x, list):
+            feats = torch.cat(x[::3], dim=-1)    # layers 0,3,6,9  (B,T,4*1024)
 
         # ── extract features ─────────────────────────────────────
         if self.expect_waveform:
