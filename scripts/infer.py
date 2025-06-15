@@ -71,9 +71,10 @@ def main() -> None:
     )
 
     # writers keyed by <machine>_<section>
-    writers = {}
+    writers: dict[str, tuple[Path, Path]] = {}
 
-    for batch in tqdm(loader, desc="Scoring evaluation clips"):
+    # ── inference with live progress bar ───────────────────────
+    for batch in tqdm(loader, desc="Scoring evaluation clips", unit="clip"):
         wav, sr, path = batch[0]
         wav = wav.to(device)
         sr  = int(sr) if torch.is_tensor(sr) else sr
@@ -83,13 +84,11 @@ def main() -> None:
         decision = 1 if score > threshold else 0
 
         p = Path(path)
-        # example path: .../eval_data/raw/ToyRCCar/test/section_00_*.wav
-        machine = p.parts[-3]                  # ToyRCCar
-        section = p.stem.split("_")[1]         # 00
+        machine = p.parts[-3]                  # e.g. ToyCar
+        section = p.stem.split("_")[1]         # e.g. "00"
 
         tag = f"{machine}_section_{section}"
         if tag not in writers:
-            # open two CSV files (append mode makes reruns safe)
             asc = csv_dir / f"anomaly_score_{tag}_test.csv"
             dec = csv_dir / f"decision_result_{tag}_test.csv"
             writers[tag] = (
@@ -100,7 +99,7 @@ def main() -> None:
         asc_fp.write(f"{p.name},{score:.6f}\n")
         dec_fp.write(f"{p.name},{decision}\n")
 
-    # close all
+    # close all file handles
     for asc_fp, dec_fp in writers.values():
         asc_fp.close()
         dec_fp.close()
