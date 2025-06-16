@@ -1,0 +1,75 @@
+# Submission information
+submission:
+  # Submission label
+  label: Kret_CU_task2_1
+  # Submission name
+  name: BEATs-Large KNN Detector
+  # Abbreviated name (≤10 chars)
+  abbreviation: BEATsKNN
+  # Authors
+  authors:
+    - firstname: Meghan
+      lastname: Kret
+      email: Meghan.notkin@cooper.edu
+      corresponding: true
+      affiliation:
+        institution: The Cooper Union
+        department: Albert Nerkin School of Engineering, Dept. of Electrical Engineering
+        location: New York, NY, USA
+
+# System information
+system:
+  description:
+    input_sampling_rate: 16kHz
+    data_augmentation: none
+    front_end: !!null
+    acoustic_features: raw waveform
+    embeddings: BEATs-Large
+    machine_learning_method: k-NN
+    aggregation_method: average
+    domain_adaptation_method: fine-tuning
+    domain_generalization_method: !!null
+    ensemble_method_subsystem_count: !!null
+    decision_making: !!null
+    attribute_usage: !!null
+    external_data_usage: pre-trained model
+    development_data_usage: development
+  complexity:
+    total_parameters: !!null   # BEATs-Large ~90M params
+    MACS: !!null
+  external_datasets:
+    - name: DCASE 2025 Challenge Task 2 Development Dataset
+      url: https://zenodo.org/records/15097779
+  source_code: https://github.com/MeghanRN/dcase2025_beats_knn
+
+# System results
+results:
+  development_dataset:
+    ToyCar:
+      auc_source: 60.04
+      auc_target: 35.52
+      pauc: 0.00
+    ToyTrain:
+      auc_source: 54.56
+      auc_target: 59.32
+      pauc: 13.60
+    bearing:
+      auc_source: 53.00
+      auc_target: 48.52
+      pauc: 13.20
+    fan:
+      auc_source: 50.84
+      auc_target: 52.44
+      pauc: 0.80
+    gearbox:
+      auc_source: 59.36
+      auc_target: 56.84
+      pauc: 0.00
+    slider:
+      auc_source: 61.28
+      auc_target: 50.96
+      pauc: 5.20
+    valve:
+      auc_source: 54.16
+      auc_target: 55.84
+      pauc: 3.60
