@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 """
-Final inference script for DCASE-2025 Task-2 (EVAL set only).
+Final inference script for DCASE-2025 Task-2 (eval set only).
 
 Creates:
   • anomaly_score_<machine>_section_<XX>_test.csv
   • decision_result_<machine>_section_<XX>_test.csv
-in results/csv (as per default.yaml).
+in results/csv (as per configs/default.yaml).
 """
 
 import argparse, sys, glob
@@ -21,14 +21,14 @@ from src.models.detector      import KNNDetector
 
 
 def main():
-    # 1) parse config & device
-    p = argparse.ArgumentParser()
-    p.add_argument("--config", default="configs/default.yaml")
-    args = p.parse_args()
+    # 1) parse arguments & load config
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", default="configs/default.yaml")
+    args = ap.parse_args()
     cfg    = load_config(args.config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 2) prepare output dirs
+    # 2) prepare directories
     bank_dir = Path(cfg["logging"]["bank_out"])
     csv_dir  = Path(cfg["logging"]["csv_out_dir"])
     csv_dir.mkdir(parents=True, exist_ok=True)
@@ -38,7 +38,7 @@ def main():
     ckpt     = torch.load(bank_dir/"memory_bank.pt", map_location=device)
 
     detector = KNNDetector(k=cfg["model"]["k"])
-    detector.fit(ckpt["memory"])  # build KNN on training-memory
+    detector.fit(ckpt["memory"])
 
     # 4) compute decision threshold
     mem_dists = [float(detector.score(x)) for x in ckpt["memory"]]
@@ -46,18 +46,19 @@ def main():
     threshold = float(np.percentile(mem_dists, pct))
     print(f"Decision threshold @ {pct}-percentile: {threshold:.6f}")
 
-    # 5) glob eval_data test WAVs
+    # 5) find eval_data test WAVs
     root = Path(cfg["data"]["root"]) / "eval_data" / "raw"
-    wavs = sorted(
-        glob.glob(str(root/"*"/"test"/"**"/*.wav), recursive=True)
-    )
-    print(f"▶ Found {len(wavs)} clips under {root}/**/test")
+    pattern = root / "*" / "test" / "**" / "*.wav"
+    wavs = sorted(glob.glob(str(pattern), recursive=True))
+    print(f"▶ Found {len(wavs)} eval clips under: {pattern}")
+
     if not wavs:
         print("⚠️  No eval_data test files found! Did you run download_task2_data.sh?")
         return
 
-    # 6) run inference with live bar
+    # 6) run inference with a live progress bar
     writers: dict[str, tuple] = {}
+
     for path in tqdm(
         wavs,
         desc="Scoring eval clips",
@@ -66,22 +67,24 @@ def main():
         dynamic_ncols=True,
         leave=True,
     ):
+        # load & preprocess
         wav, sr = torchaudio.load(path)
-        if wav.shape[0] > 1:             # mix to mono
+        if wav.shape[0] > 1:
             wav = wav.mean(dim=0, keepdim=True)
         wav = wav.to(device)
         sr  = int(sr)
 
-        feat  = backbone(wav, sr)
-        score = float(detector.score(feat.cpu()))
+        # forward & score
+        feat     = backbone(wav, sr)
+        score    = float(detector.score(feat.cpu()))
         decision = 1 if score > threshold else 0
 
-        p = Path(path)
-        machine = p.parent.parent.name        # eval_data/raw/<machine>/test/...
-        section = p.parent.name.split("_")[1] # "section_XX" → "XX"
-        tag = f"{machine}_section_{section}"
+        p       = Path(path)
+        machine = p.parent.parent.name          # eval_data/raw/<machine>/test/...
+        section = p.parent.name.split("_")[1]   # "section_XX" → "XX"
+        tag     = f"{machine}_section_{section}"
 
-        # open files on first use
+        # open CSVs on first write
         if tag not in writers:
             asc = csv_dir / f"anomaly_score_{tag}_test.csv"
             dec = csv_dir / f"decision_result_{tag}_test.csv"
@@ -91,9 +94,10 @@ def main():
         asc_fp.write(f"{p.name},{score:.6f}\n")
         dec_fp.write(f"{p.name},{decision}\n")
 
-    # 7) close all
-    for a, d in writers.values():
-        a.close(); d.close()
+    # 7) close all file handles
+    for asc_fp, dec_fp in writers.values():
+        asc_fp.close()
+        dec_fp.close()
 
     print(f"✅ All CSVs written to {csv_dir}/")
 
