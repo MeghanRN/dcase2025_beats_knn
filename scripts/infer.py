@@ -6,7 +6,7 @@ with GPU-accelerated k-NN scoring and CPU-based threshold compute.
 Creates:
   • anomaly_score_<machine>_section_<XX>_test.csv
   • decision_result_<machine>_section_<XX>_test.csv
-under your csv_out_dir (configs/default.yaml).
+under your csv_out_dir (as set in configs/default.yaml).
 """
 
 import argparse
@@ -36,12 +36,12 @@ def main():
     csv_dir  = Path(cfg["logging"]["csv_out_dir"])
     csv_dir.mkdir(parents=True, exist_ok=True)
 
-    # 3) load backbone & raw memory bank
+    # 3) load backbone & raw memory bank (on CPU)
     backbone = BEATsBackbone(cfg["model"]["embedding"]).to(device).eval()
     ckpt     = torch.load(bank_dir/"memory_bank.pt", map_location="cpu")
-    raw_mem  = ckpt["memory"]   # list of 1×D Tensors on CPU
+    raw_mem  = ckpt["memory"]   # list of (1×D) Tensors
 
-    # 4) CPU threshold compute via sklearn‐KNN
+    # 4) compute threshold on CPU via sklearn-kNN
     detector_cpu = KNNDetector(k=cfg["model"]["k"])
     detector_cpu.fit(raw_mem)
     mem_dists = [float(detector_cpu.score(x)) for x in raw_mem]
@@ -50,20 +50,19 @@ def main():
     print(f"Decision threshold @ {pct}-percentile: {threshold:.6f}")
 
     # 5) build GPU memory bank for fast scoring
-    #    -> squeeze out the extra dimension so we get (N, D)
-    mem_bank = torch.stack([x.squeeze(0) for x in raw_mem], dim=0).to(device)
+    mem_bank = torch.stack([x.squeeze(0) for x in raw_mem], dim=0).to(device)  # (N_train, D)
     K        = cfg["model"]["k"]
 
-    # 6) find eval_data test WAVs
-    root    = Path(cfg["data"]["root"])/"eval_data"/"raw"
-    wavs    = sorted(glob.glob(str(root/"*"/"test"/"**"/*.wav), recursive=True))
-    print(f"▶ Found {len(wavs)} eval clips under {root}/**/test")
-
+    # 6) glob eval_data test WAVs (fixed syntax!)
+    root    = cfg["data"]["root"]
+    pattern = f"{root}/eval_data/raw/*/test/**/*.wav"
+    wavs    = sorted(glob.glob(pattern, recursive=True))
+    print(f"▶ Found {len(wavs)} eval clips under: {pattern}")
     if not wavs:
-        print("⚠️  No eval_data test files! Run download_task2_data.sh")
+        print("⚠️  No eval_data test files found! Did you run download_task2_data.sh?")
         sys.exit(1)
 
-    # 7) inference loop w/ live bar
+    # 7) inference loop w/ live tqdm bar
     writers = {}
     for path in tqdm(
         wavs,
@@ -74,16 +73,15 @@ def main():
         leave=True,
     ):
         wav, sr = torchaudio.load(path)
-        if wav.shape[0] > 1:
+        if wav.size(0) > 1:
             wav = wav.mean(dim=0, keepdim=True)
-        wav = wav.to(device)
-        sr  = int(sr)
+        wav = wav.to(device); sr = int(sr)
 
-        # embed
-        feat = backbone(wav, sr)          # (1, D) on GPU
+        # get embedding
+        feat = backbone(wav, sr)                 # (1, D) on GPU
 
-        # GPU k‐NN: cdist + topk
-        d    = torch.cdist(feat, mem_bank)            # (1, N_train)
+        # GPU k-NN scoring
+        d    = torch.cdist(feat, mem_bank)       # (1, N_train)
         topk = torch.topk(d, k=K, dim=1, largest=False).values  # (1, K)
         score = float(topk.mean().item())
 
@@ -103,7 +101,7 @@ def main():
         asc_fp.write(f"{p.name},{score:.6f}\n")
         dec_fp.write(f"{p.name},{decision}\n")
 
-    # 8) close file handles
+    # 8) close all file handles
     for asc_fp, dec_fp in writers.values():
         asc_fp.close(); dec_fp.close()
 
