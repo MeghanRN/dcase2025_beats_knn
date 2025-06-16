@@ -100,7 +100,7 @@ def main():
 
         p       = Path(path)
         machine = p.parent.parent.name      # e.g. CoffeeGrinder
-        section = p.parent.name.split("_")[1]  # "section_XX" → "XX"
+        section = p.stem.split("_")[1]         # take "section_XX_####" → ["section","XX","####"]
         tag     = f"{machine}_section_{section}"
 
         # open CSVs on first use
